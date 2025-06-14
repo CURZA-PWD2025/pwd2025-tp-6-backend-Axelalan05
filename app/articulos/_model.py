@@ -1,26 +1,30 @@
 from app.database import get_db_connection
 import mysql.connector
+from ..marcas._model import MarcaModel
+from ..proveedores._model import ProveedorModel
+from ..categorias._model import CategoriaModel
 
 class ArticuloModel:
-    def __init__(self, id=None, descripcion=None, precio=None, stock=None, marca_id=None, proveedor_id=None, categoria_ids=None):
+    def __init__(self, id=None, descripcion=None, precio=None, stock=None, marca=None, proveedor=None, categorias=None):
         self.id = id
         self.descripcion = descripcion
         self.precio = precio
         self.stock = stock
-        self.marca_id = marca_id
-        self.proveedor_id = proveedor_id
-        self.categoria_ids = categoria_ids if categoria_ids is not None else []
-
+        self.marca: MarcaModel = marca
+        self.proveedor: ProveedorModel = proveedor
+        self.categorias: list[CategoriaModel] = categorias if categorias is not None else []
+        
     def serializar(self):
-        # Este método no se usa directamente para la respuesta final,
-        # ya que get_one construye el objeto completo.
-        # Lo mantenemos por consistencia.
         return {
-            'id': self.id, 'descripcion': self.descripcion, 'precio': str(self.precio),
-            'stock': self.stock, 'marca_id': self.marca_id,
-            'proveedor_id': self.proveedor_id, 'categoria_ids': self.categoria_ids
+            'id': self.id,
+            'descripcicion': self.descripcion,
+            'precio': str(self.precio),
+            'stock': self.stock,
+            'marca': self.marca.serializar() if self.marca else None,
+            'proveedor': self.proveedor.serializar() if self.proveedor else None,
+            'categorias': [cat.serializar() for cat in self.categorias]
         }
-
+        
     @staticmethod
     def deserializar(data):
         return ArticuloModel(
@@ -28,45 +32,11 @@ class ArticuloModel:
             descripcion=data.get('descripcion'),
             precio=data.get('precio'),
             stock=data.get('stock'),
-            marca_id=data.get('marca_id'),
-            proveedor_id=data.get('proveedor_id'),
-            categoria_ids=data.get('categoria_ids', [])
+            marca=MarcaModel(id=data.get('proveedor_id')),
+            proveedor=ProveedorModel(id=data.get('proveedor_id')),
+            categorias=[CategoriaModel(id=cat_id) for cat_id in data.get('categorias_ids', [])]
         )
-
-    @staticmethod
-    def _fetch_related_data(articulo_row, cxn):
-        """Función auxiliar para obtener los datos relacionados de un artículo."""
-        cursor = cxn.cursor(dictionary=True)
-        
-        # Obtener marca
-        cursor.execute("SELECT id, nombre FROM MARCAS WHERE id = %s", (articulo_row['marca_id'],))
-        marca = cursor.fetchone()
-        
-        # Obtener proveedor
-        cursor.execute("SELECT * FROM PROVEEDORES WHERE id = %s", (articulo_row['proveedor_id'],))
-        proveedor = cursor.fetchone()
-        
-        # Obtener categorías
-        query_cat = """
-            SELECT c.id, c.nombre FROM CATEGORIAS c
-            JOIN ARTICULOS_CATEGORIAS ac ON c.id = ac.categoria_id
-            WHERE ac.articulo_id = %s
-        """
-        cursor.execute(query_cat, (articulo_row['id'],))
-        categorias = cursor.fetchall()
-        
-        cursor.close()
-        
-        return {
-            "id": articulo_row['id'],
-            "descripcion": articulo_row['descripcion'],
-            "precio": str(articulo_row['precio']),
-            "stock": articulo_row['stock'],
-            "marca": marca,
-            "proveedor": proveedor,
-            "categorias": categorias
-        }
-
+    
     @staticmethod
     def get_all():
         cxn = get_db_connection()
@@ -74,54 +44,89 @@ class ArticuloModel:
         cursor = cxn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM ARTICULOS")
         articulos_rows = cursor.fetchall()
-        
-        articulos_completos = []
-        if articulos_rows:
-            for row in articulos_rows:
-                articulos_completos.append(ArticuloModel._fetch_related_data(row, cxn))
-
         cursor.close()
         cxn.close()
-        return articulos_completos
 
+        articulos = []
+        if articulos_rows:
+            for row in articulos_rows:
+                marca_obj = MarcaModel.get_one(row['marca_id'])
+                proveedor_obj = ProveedorModel.get_one(row['proveedor_id'])
+                categorias_list = ArticuloModel._get_categorias_for_articulo(row['id'])
+
+                articulo = ArticuloModel(
+                    id=row['id'],
+                    descripcion=row['descripcion'],
+                    precio=row['precio'],
+                    stock=row['stock'],
+                    marca=MarcaModel.deserializar(marca_obj) if marca_obj else None,
+                    proveedor=ProveedorModel.deserializar(proveedor_obj) if proveedor_obj else None,
+                    categorias=categorias_list
+                )
+                articulos.append(articulo.serializar())
+        return articulos
+    
     @staticmethod
     def get_one(id):
         cxn = get_db_connection()
         if not cxn: return None
         cursor = cxn.cursor(dictionary=True)
         cursor.execute("SELECT * FROM ARTICULOS WHERE id = %s", (id,))
-        articulo_row = cursor.fetchone()
-        
-        articulo_completo = None
-        if articulo_row:
-            articulo_completo = ArticuloModel._fetch_related_data(articulo_row, cxn)
-
+        row = cursor.fetchone()
         cursor.close()
         cxn.close()
-        return articulo_completo
+        
+        if row:
+            marca_obj = MarcaModel.get_one(row['marca_id'])
+            proveedor_obj = ProveedorModel.get_one(row['proveedor_id'])
+            categorias_list = ArticuloModel._get_categorias_for_articulo(row['id'])
+
+            articulo = ArticuloModel(
+                id=row['id'],
+                descripcion=row['descripcion'],
+                precio=row['precio'],
+                stock=row['stock'],
+                marca=MarcaModel.deserializar(marca_obj) if marca_obj else None,
+                proveedor=ProveedorModel.deserializar(proveedor_obj) if proveedor_obj else None,
+                categorias=categorias_list
+            )
+            return articulo.serializar()
+        return None
+
+    @staticmethod
+    def _get_categorias_for_articulo(articulo_id):
+        cxn = get_db_connection()
+        if not cxn: return []
+        cursor = cxn.cursor(dictionary=True)
+        query = """
+            SELECT c.id, c.nombre FROM CATEGORIAS c
+            JOIN ARTICULOS_CATEGORIAS ac ON c.id = ac.categoria_id
+            WHERE ac.articulo_id = %s
+        """
+        cursor.execute(query, (articulo_id,))
+        cat_rows = cursor.fetchall()
+        cursor.close()
+        cxn.close()
+        return [CategoriaModel.deserializar(cat) for cat in cat_rows]
 
     def create(self):
         cxn = get_db_connection()
-        if not cxn: return False
+        if not cxn: return None
         cursor = cxn.cursor()
         try:
             cxn.start_transaction()
             query_art = "INSERT INTO ARTICULOS (descripcion, precio, stock, marca_id, proveedor_id) VALUES (%s, %s, %s, %s, %s)"
-            params_art = (self.descripcion, self.precio, self.stock, self.marca_id, self.proveedor_id)
+            params_art = (self.descripcion, self.precio, self.stock, self.marca.id, self.proveedor.id)
             cursor.execute(query_art, params_art)
             self.id = cursor.lastrowid
-            
-            if self.categoria_ids:
-                query_cat = "INSERT INTO ARTICULOS_CATEGORIAS (articulo_id, categoria_id) VALUES (%s, %s)"
-                params_cat = [(self.id, cat_id) for cat_id in self.categoria_ids]
-                cursor.executemany(query_cat, params_cat)
-            
+            self._manage_categorias(cursor)
+
             cxn.commit()
-            return True
+            return self.id
         except mysql.connector.Error as err:
             cxn.rollback()
             print(f"Error al crear artículo: {err}")
-            return False
+            return None
         finally:
             cursor.close()
             cxn.close()
@@ -133,14 +138,10 @@ class ArticuloModel:
         try:
             cxn.start_transaction()
             query_art = "UPDATE ARTICULOS SET descripcion=%s, precio=%s, stock=%s, marca_id=%s, proveedor_id=%s WHERE id=%s"
-            params_art = (self.descripcion, self.precio, self.stock, self.marca_id, self.proveedor_id, self.id)
+            params_art = (self.descripcion, self.precio, self.stock, self.marca.id, self.proveedor.id, self.id)
             cursor.execute(query_art, params_art)
 
-            cursor.execute("DELETE FROM ARTICULOS_CATEGORIAS WHERE articulo_id = %s", (self.id,))
-            if self.categoria_ids:
-                query_cat = "INSERT INTO ARTICULOS_CATEGORIAS (articulo_id, categoria_id) VALUES (%s, %s)"
-                params_cat = [(self.id, cat_id) for cat_id in self.categoria_ids]
-                cursor.executemany(query_cat, params_cat)
+            self._manage_categorias(cursor)
 
             cxn.commit()
             return True
@@ -151,6 +152,13 @@ class ArticuloModel:
         finally:
             cursor.close()
             cxn.close()
+    
+    def _manage_categorias(self, cursor):
+        cursor.execute("DELETE FROM ARTICULOS_CATEGORIAS WHERE articulo_id = %s", (self.id,))
+        if self.categorias:
+            query_cat = "INSERT INTO ARTICULOS_CATEGORIAS (articulo_id, categoria_id) VALUES (%s, %s)"
+            params_cat = [(self.id, cat.id) for cat in self.categorias]
+            cursor.executemany(query_cat, params_cat)
 
     @staticmethod
     def delete(id):
@@ -165,7 +173,6 @@ class ArticuloModel:
             return cursor.rowcount > 0
         except mysql.connector.Error as err:
             cxn.rollback()
-            print(f"Error al eliminar artículo: {err}")
             return False
         finally:
             cursor.close()

@@ -26,10 +26,10 @@ class MarcaModel:
     
     @staticmethod
     def get_one(id):
-        cxn = get_db_connection
+        cxn = get_db_connection()
         if not cxn: return None
         cursor = cxn.cursor(dictionary=True)
-        cursor.execute("SELECT * FROM MARCAR WHERE id = %", (id,))
+        cursor.execute("SELECT * FROM MARCAS WHERE id = %s", (id,))
         marca = cursor.fetchone()
         cursor.close()
         cxn.close()
@@ -40,7 +40,7 @@ class MarcaModel:
         if not cxn: return False
         cursor = cxn.cursor()
         try:
-            cursor.execute("INSERT INTO MARCAR (nombre) VALUES (%)", (self.nombre,))
+            cursor.execute("INSERT INTO MARCAS (nombre) VALUES (%)", (self.nombre,))
             cxn.commit()
             self.id = cursor.lastrowid
             return True

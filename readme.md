@@ -25,6 +25,7 @@ El **Articulo** tienen como atributos
 | stock       |      int       |
 | marca       |   MarcaModel   |
 | proveedor   | ProveedorModel |
+| categorias | list[CategoriaModel]|
 
 **Categorias** y **Marca**
 
